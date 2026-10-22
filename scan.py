@@ -265,6 +265,7 @@ def run():
             "created": now(),
         }
 
+    state.setdefault("pending_notifications", {})
     checked = now()
     successful = 0
 
@@ -305,11 +306,13 @@ def run():
                     }
                     if not baseline:
                         added += 1
+                        state["pending_notifications"][url] = {"title": item["title"], "url": url, "kind": "Nuevo", "detected": checked, "delivered": []}
                 else:
                     existing["last_seen"] = checked
                     if item.get("modified") and existing.get("modified") and item["modified"] != existing["modified"]:
                         existing["updated_seen"] = checked
                         added += 1
+                        state["pending_notifications"][url] = {"title": existing["title"], "url": url, "kind": "Actualizado", "detected": checked, "delivered": []}
                     if item.get("modified"):
                         existing["modified"] = item["modified"]
                     if source["type"] != "sitemap":

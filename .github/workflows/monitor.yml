@@ -8,6 +8,8 @@ on:
     branches: ["main"]
     paths:
       - "scan.py"
+      - "notify.py"
+      - "test*.py"
       - "site/index.html"
       - ".github/workflows/monitor.yml"
 
@@ -38,8 +40,20 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Ejecutar pruebas
+        run: python -m unittest -v
+
       - name: Revisar fuentes
         run: python scan.py
+
+      - name: Enviar novedades por correo
+        id: email
+        continue-on-error: true
+        env:
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          MAIL_TO: emilio.antunez.88@gmail.com,laotracaradelatorre@gmail.com
+        run: python notify.py
 
       - name: Guardar historial
         run: |
@@ -62,3 +76,8 @@ jobs:
       - name: Publicar
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Informar fallo de correo
+        if: steps.email.outcome == 'failure'
+        run: |
+          echo "Falló el correo. Las novedades siguen pendientes; revisar SMTP_USERNAME y SMTP_PASSWORD."
+          exit 1
