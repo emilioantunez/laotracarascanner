@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit, quote, unquote
 from urllib.request import Request, urlopen
 
 OUTPUT = Path("site/data.json")
@@ -54,6 +54,69 @@ SOURCES = [
     },
 ]
 
+SOURCES.extend([
+    {"name": "Mapa completo en español", "url": "https://www.jw.org/es/sitemap.xml", "type": "sitemap"},
+    {"name": "Catálogo multimedia en español", "url": "https://b.jw-cdn.org/apis/mediator/v1/categories/S", "type": "media"},
+])
+
+
+def sitemap_items(url, visited=None):
+    visited = set() if visited is None else visited
+    if url in visited:
+        return []
+    if not canonical(url):
+        raise ValueError("Mapa fuera de jw.org")
+    visited.add(url)
+    root = ET.fromstring(fetch(url))
+    ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    if root.tag.endswith("sitemapindex"):
+        result = []
+        for node in root.findall("s:sitemap", ns):
+            result.extend(sitemap_items(node.findtext("s:loc", namespaces=ns), visited))
+        return result
+    if not root.tag.endswith("urlset"):
+        raise ValueError("Formato de mapa desconocido")
+    result = []
+    for node in root.findall("s:url", ns):
+        link = canonical(node.findtext("s:loc", default="", namespaces=ns))
+        if link and urlsplit(link).path.startswith("/es/"):
+            result.append({"url": link, "title": unquote(urlsplit(link).path).strip("/").split("/")[-1].replace("-", " "),
+                           "published": None, "modified": node.findtext("s:lastmod", namespaces=ns)})
+    return result
+
+
+def media_items(base):
+    pending = [c["key"] for c in json.loads(fetch(base + "?detailed=1"))["categories"]]
+    visited, result = set(), {}
+    while pending:
+        key = pending.pop()
+        if key in visited:
+            continue
+        visited.add(key)
+        offset = 0
+        while True:
+            data = json.loads(fetch(base + "/" + quote(key, safe="") + f"?detailed=1&limit=500&offset={offset}"))
+            category = data["category"]
+            pending.extend(c["key"] for c in category.get("subcategories", []))
+            media = category.get("media", [])
+            for item in media:
+                identity = item.get("languageAgnosticNaturalKey") or item.get("naturalKey")
+                if not identity or not item.get("title"):
+                    raise ValueError("Elemento multimedia sin identificador o título")
+                link = "https://www.jw.org/es/biblioteca/videos/#es/mediaitems/" + quote(identity, safe="")
+                result[link] = {"url": link, "title": item["title"], "published": item.get("firstPublished"),
+                                "section": "Videos" if item.get("type") == "video" else "Audio y música"}
+            pagination = data.get("pagination") or {}
+            total = pagination.get("totalCount", len(media))
+            offset += len(media)
+            if offset >= total:
+                break
+            if not media:
+                raise ValueError(f"Paginación incompleta: {key}, {offset}/{total}")
+        time.sleep(0.05)
+    return list(result.values())
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -63,9 +126,8 @@ def canonical(url):
         return None
     if p.hostname not in ("jw.org", "www.jw.org"):
         return None
-    # Los enlaces a reproductores que solo cambian el fragmento
-    # necesitan un adaptador específico; no los contamos aquí.
-    return urlunsplit(("https", "www.jw.org", p.path, "", ""))
+    fragment = p.fragment if p.fragment.startswith("es/mediaitems/") else ""
+    return urlunsplit(("https", "www.jw.org", quote(unquote(p.path), safe="/"), "", fragment))
 
 def section(url):
     path = urlsplit(url).path
@@ -124,6 +186,8 @@ class Links(HTMLParser):
             self.main_depth = max(0, self.main_depth - 1)
 
 def fetch(url):
+    parts = urlsplit(url)
+    url = urlunsplit((parts.scheme, parts.netloc, quote(unquote(parts.path), safe="/"), parts.query, ""))
     request = Request(
         url,
         headers={
@@ -132,9 +196,9 @@ def fetch(url):
         },
     )
     with urlopen(request, timeout=35) as response:
-        body = response.read(5_000_001)
-        if len(body) > 5_000_000:
-            raise ValueError("La respuesta supera el límite de 5 MB")
+        body = response.read(50_000_001)
+        if len(body) > 50_000_000:
+            raise ValueError("La respuesta supera el límite de 50 MB")
         charset = response.headers.get_content_charset() or "utf-8"
         return body.decode(charset, errors="replace")
 
@@ -210,12 +274,13 @@ def run():
         baseline = not previous.get("initialized", False)
 
         try:
-            body = fetch(source["url"])
-            items = (
-                rss_items(body)
-                if source["type"] == "rss"
-                else html_items(body, source)
-            )
+            if source["type"] == "sitemap":
+                items = sitemap_items(source["url"])
+            elif source["type"] == "media":
+                items = media_items(source["url"])
+            else:
+                body = fetch(source["url"])
+                items = rss_items(body) if source["type"] == "rss" else html_items(body, source)
 
             if not items:
                 raise ValueError(
@@ -232,7 +297,7 @@ def run():
                 if existing is None:
                     state["items"][url] = {
                         **item,
-                        "section": section(url),
+                        "section": item.get("section", section(url)),
                         "first_seen": checked,
                         "last_seen": checked,
                         "baseline": baseline,
@@ -242,6 +307,13 @@ def run():
                         added += 1
                 else:
                     existing["last_seen"] = checked
+                    if item.get("modified") and existing.get("modified") and item["modified"] != existing["modified"]:
+                        existing["updated_seen"] = checked
+                        added += 1
+                    if item.get("modified"):
+                        existing["modified"] = item["modified"]
+                    if source["type"] != "sitemap":
+                        existing["title"] = item["title"]
                     if name not in existing["sources"]:
                         existing["sources"].append(name)
                     if item["published"]:

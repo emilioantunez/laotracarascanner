@@ -66,10 +66,11 @@ La carga inicial de cada fuente se marca como referencia.
 <details>
   <summary>Estado de las fuentes y cobertura</summary>
   <p>
-    Se revisan los enlaces visibles en las páginas configuradas y el RSS.
-    No se recorren todas las páginas internas.
-    Videos, música y Broadcasting necesitan adaptadores adicionales
-    para garantizar cobertura del catálogo dinámico.
+    Se revisan el mapa completo de páginas en español, el RSS, las páginas de novedades
+    y todas las categorías y páginas del catálogo multimedia (vídeos, Broadcasting y audio).
+    Los cambios de fecha del mapa se muestran como actualizaciones. La cobertura depende
+    de lo que jw.org publique en estas fuentes; los contenidos no indexados pueden quedar fuera.
+    Un error de fuente indica que la revisión quedó incompleta.
   </p>
   <div id="sources"></div>
 </details>
@@ -120,21 +121,21 @@ function render() {
     if (chosen && item.section !== chosen) return false;
     if (!item.title.toLocaleLowerCase().includes(query)) return false;
 
-    if (period !== "all" && item.baseline) return false;
+    if (period !== "all" && item.baseline && !item.updated_seen) return false;
 
     if (period === "today") {
-      return day(item.first_seen) === day(current);
+      return day(item.updated_seen || item.first_seen) === day(current);
     }
     if (period === "visit") {
       return previousVisit &&
-        new Date(item.first_seen) > new Date(previousVisit);
+        new Date(item.updated_seen || item.first_seen) > new Date(previousVisit);
     }
     if (period === "week") {
-      return new Date(item.first_seen).getTime() >= weekStart;
+      return new Date(item.updated_seen || item.first_seen).getTime() >= weekStart;
     }
     return true;
   }).sort((a, b) =>
-    new Date(b.first_seen) - new Date(a.first_seen)
+    new Date(b.updated_seen || b.first_seen) - new Date(a.updated_seen || a.first_seen)
   );
 
   $("items").replaceChildren();
@@ -156,7 +157,7 @@ function render() {
   for (const item of results) {
     const card = el("article");
     card.append(el("span",
-      item.section + (item.baseline ? " · Referencia inicial" : " · Detectado"),
+      item.section + (item.updated_seen ? " · Actualizado" : item.baseline ? " · Referencia inicial" : " · Detectado"),
       "badge"
     ));
 
@@ -183,6 +184,7 @@ function render() {
       `Primera detección: ${formatted(item.first_seen)}`
     ));
 
+    if (item.updated_seen) card.append(el("p", `Cambio detectado: ${formatted(item.updated_seen)}`));
     if (item.published) {
       card.append(el("p",
         `Fecha informada por la fuente: ${item.published}`
