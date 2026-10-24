@@ -11,7 +11,7 @@ class NotificationTests(unittest.TestCase):
     def test_retry_only_failed_recipient(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'data.json'
-            output.write_text(json.dumps({'pending_notifications': {'url': {'title': 'Vídeo', 'url': 'https://www.jw.org/es/test/', 'kind': 'Nuevo', 'detected': '2026-10-22', 'delivered': []}}}), encoding='utf-8')
+            output.write_text(json.dumps({'pending_notifications': {'old': {'kind': 'Actualizado'}, 'url': {'title': 'Vídeo', 'url': 'https://www.jw.org/es/test/', 'kind': 'Nuevo', 'detected': '2026-10-22', 'delivered': []}}}), encoding='utf-8')
             env = {'SMTP_USERNAME': 'sender@example.com', 'SMTP_PASSWORD': 'test', 'MAIL_TO': 'one@example.com,two@example.com'}
             with patch.object(notify, 'OUTPUT', output), patch.dict(os.environ, env), patch.object(notify.smtplib, 'SMTP') as factory:
                 smtp = factory.return_value.__enter__.return_value
@@ -24,6 +24,7 @@ class NotificationTests(unittest.TestCase):
                 smtp.send_message.return_value = {}
                 notify.run()
                 self.assertEqual(smtp.send_message.call_count, 1)
+                self.assertNotIn('actualizaciones', smtp.send_message.call_args.args[0].get_content())
                 self.assertEqual(smtp.send_message.call_args.args[0]['To'], 'two@example.com')
                 self.assertEqual(json.loads(output.read_text())['pending_notifications'], {})
 
@@ -34,3 +35,13 @@ class NotificationTests(unittest.TestCase):
             with patch.object(notify, 'OUTPUT', output), patch.object(notify.smtplib, 'SMTP') as smtp:
                 notify.run()
                 smtp.assert_not_called()
+
+
+    def test_legacy_updates_are_discarded_without_connecting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'data.json'
+            output.write_text(json.dumps({'pending_notifications': {'old': {'kind': 'Actualizado'}}}))
+            with patch.object(notify, 'OUTPUT', output), patch.object(notify.smtplib, 'SMTP') as smtp:
+                notify.run()
+                smtp.assert_not_called()
+            self.assertEqual(json.loads(output.read_text())['pending_notifications'], {})

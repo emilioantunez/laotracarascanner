@@ -265,7 +265,11 @@ def run():
             "created": now(),
         }
 
-    state.setdefault("pending_notifications", {})
+    # Descarta avisos de actualizaciones creados por versiones anteriores.
+    state["pending_notifications"] = {
+        url: event for url, event in state.get("pending_notifications", {}).items()
+        if event.get("kind") == "Nuevo"
+    }
     checked = now()
     successful = 0
 
@@ -309,10 +313,6 @@ def run():
                         state["pending_notifications"][url] = {"title": item["title"], "url": url, "kind": "Nuevo", "detected": checked, "delivered": []}
                 else:
                     existing["last_seen"] = checked
-                    if item.get("modified") and existing.get("modified") and item["modified"] != existing["modified"]:
-                        existing["updated_seen"] = checked
-                        added += 1
-                        state["pending_notifications"][url] = {"title": existing["title"], "url": url, "kind": "Actualizado", "detected": checked, "delivered": []}
                     if item.get("modified"):
                         existing["modified"] = item["modified"]
                     if source["type"] != "sitemap":

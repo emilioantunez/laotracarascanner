@@ -1,7 +1,7 @@
 # Correos de novedades
 
 Destinatarios: emilio.antunez.88@gmail.com y laotracaradelatorre@gmail.com.
-El escaneo actual se ejecuta cada 6 horas. Los correos se envían cuando termina y hay novedades: páginas nuevas, vídeos/audio nuevos o cambios de fecha en el mapa. La carga inicial de cada fuente no genera correos.
+El escaneo actual se ejecuta cada 6 horas. Los correos se envían cuando termina y hay novedades: publicaciones nuevas, incluidos vídeos, Broadcasting, canciones, libros, folletos y tarjetas que aparezcan en las fuentes consultadas. Los cambios de fecha, título o contenido de publicaciones ya conocidas no generan correos. Los avisos de actualizaciones pendientes de versiones anteriores se descartan. La carga inicial de cada fuente no genera correos.
 
 ## Activación
 

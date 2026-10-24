@@ -31,18 +31,47 @@ class ScannerTests(unittest.TestCase):
         self.assertNotEqual(items[0]['url'], items[1]['url'])
         self.assertEqual(scan.canonical(items[0]['url']), items[0]['url'])
 
-    def test_changes_to_initial_reference_are_visible(self):
+    def test_existing_publication_changes_do_not_notify(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'data.json'
             source = {'name': 'Map', 'url': 'https://www.jw.org/es/sitemap.xml', 'type': 'sitemap'}
             item = {'url': 'https://www.jw.org/es/test/', 'title': 'Test', 'published': None, 'modified': '2026-10-21'}
             with patch.object(scan, 'OUTPUT', output), patch.object(scan, 'SOURCES', [source]), patch.object(scan.time, 'sleep'), patch.object(scan, 'sitemap_items', return_value=[item]):
                 scan.run()
+                state = json.loads(output.read_text(encoding='utf-8'))
+                state['pending_notifications'] = {'old': {'kind': 'Actualizado'}}
+                output.write_text(json.dumps(state), encoding='utf-8')
                 item['modified'] = '2026-10-22'
+                item['title'] = 'Changed title'
                 scan.run()
             state = json.loads(output.read_text(encoding='utf-8'))
-            self.assertTrue(state['items'][item['url']]['updated_seen'])
-            self.assertEqual(state['sources']['Map']['new'], 1)
+            self.assertEqual(state['items'][item['url']]['modified'], '2026-10-22')
+            self.assertNotIn('updated_seen', state['items'][item['url']])
+            self.assertEqual(state['sources']['Map']['new'], 0)
+            self.assertEqual(state['pending_notifications'], {})
+
+
+class NewPublicationTests(unittest.TestCase):
+    def test_new_publication_survives_updates_and_repeat_scans(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'data.json'
+            source = {'name': 'Map', 'url': 'https://www.jw.org/es/sitemap.xml', 'type': 'sitemap'}
+            old = {'url': 'https://www.jw.org/es/old/', 'title': 'Old', 'published': None, 'modified': '2026-10-21'}
+            new = {'url': 'https://www.jw.org/es/new/', 'title': 'New', 'published': None, 'modified': '2026-10-22'}
+            with patch.object(scan, 'OUTPUT', output), patch.object(scan, 'SOURCES', [source]), patch.object(scan.time, 'sleep'), patch.object(scan, 'sitemap_items') as items:
+                items.return_value = [old]
+                scan.run()
+                self.assertEqual(json.loads(output.read_text())['pending_notifications'], {})
+                items.return_value = [old, new]
+                scan.run()
+                state = json.loads(output.read_text())
+                self.assertEqual(state['sources']['Map']['new'], 1)
+                self.assertEqual(list(state['pending_notifications']), [new['url']])
+                new['modified'] = '2026-10-23'
+                scan.run()
+                state = json.loads(output.read_text())
+                self.assertEqual(state['sources']['Map']['new'], 0)
+                self.assertEqual(state['pending_notifications'][new['url']]['kind'], 'Nuevo')
 
 
 if __name__ == '__main__':

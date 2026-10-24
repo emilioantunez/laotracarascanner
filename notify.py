@@ -18,7 +18,12 @@ def save(state):
 
 def run():
     state = json.loads(OUTPUT.read_text(encoding='utf-8'))
-    pending = state.setdefault('pending_notifications', {})
+    pending = {key: event for key, event in state.get('pending_notifications', {}).items()
+               if event.get('kind') == 'Nuevo'}
+    if pending != state.get('pending_notifications', {}):
+        state['pending_notifications'] = pending
+        save(state)
+    state['pending_notifications'] = pending
     if not pending:
         print('Sin novedades pendientes de correo.')
         return
@@ -40,8 +45,8 @@ def run():
                 message = EmailMessage()
                 message['From'] = sender
                 message['To'] = recipient
-                message['Subject'] = f'JW.org: {len(batch)} novedades detectadas'
-                body = ['Novedades y actualizaciones detectadas en jw.org (español).', '']
+                message['Subject'] = f'JW.org: {len(batch)} publicaciones nuevas'
+                body = ['Publicaciones nuevas detectadas en jw.org (español).', '']
                 for event in batch:
                     body.extend([f"{event['kind']}: {event['title']}", event['url'], f"Detectado: {event['detected']}", ''])
                 body.append('Se avisa al completar el escaneo programado; la carga inicial no genera correos.')
