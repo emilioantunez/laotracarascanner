@@ -49,6 +49,9 @@ small { color: #bcbccd; }
     <option value="today">Detectado hoy</option>
     <option value="visit">Desde mi última visita</option>
     <option value="week">Últimos 7 días</option>
+    <option value="15">Últimos 15 días</option>
+    <option value="30">Últimos 30 días</option>
+    <option value="60">Últimos 60 días</option>
     <option value="all">Todo el historial</option>
   </select>
   <button id="refresh">Actualizar resultados</button>
@@ -115,7 +118,8 @@ function render() {
   const chosen = $("section").value;
   const period = $("period").value;
   const current = new Date();
-  const weekStart = current.getTime() - 7 * 86400000;
+  const days = {week: 7, "15": 15, "30": 30, "60": 60}[period];
+  const periodStart = current.getTime() - days * 86400000;
 
   const results = Object.values(data.items).filter(item => {
     if (chosen && item.section !== chosen) return false;
@@ -130,8 +134,8 @@ function render() {
       return previousVisit &&
         new Date(item.first_seen) > new Date(previousVisit);
     }
-    if (period === "week") {
-      return new Date(item.first_seen).getTime() >= weekStart;
+    if (days) {
+      return new Date(item.first_seen).getTime() >= periodStart;
     }
     return true;
   }).sort((a, b) =>
