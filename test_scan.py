@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,7 +58,7 @@ class NewPublicationTests(unittest.TestCase):
             output = Path(directory) / 'data.json'
             source = {'name': 'Map', 'url': 'https://www.jw.org/es/sitemap.xml', 'type': 'sitemap'}
             old = {'url': 'https://www.jw.org/es/old/', 'title': 'Old', 'published': None, 'modified': '2026-10-21'}
-            new = {'url': 'https://www.jw.org/es/new/', 'title': 'New', 'published': None, 'modified': '2026-10-22'}
+            new = {'url': 'https://www.jw.org/es/new/', 'title': 'New', 'published': datetime.now(timezone.utc).isoformat(), 'modified': '2026-10-22'}
             with patch.object(scan, 'OUTPUT', output), patch.object(scan, 'SOURCES', [source]), patch.object(scan.time, 'sleep'), patch.object(scan, 'sitemap_items') as items:
                 items.return_value = [old]
                 scan.run()
