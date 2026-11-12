@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,7 +58,7 @@ class NewPublicationTests(unittest.TestCase):
             output = Path(directory) / 'data.json'
             source = {'name': 'Map', 'url': 'https://www.jw.org/es/sitemap.xml', 'type': 'sitemap'}
             old = {'url': 'https://www.jw.org/es/old/', 'title': 'Old', 'published': None, 'modified': '2026-10-21'}
-            new = {'url': 'https://www.jw.org/es/new/', 'title': 'New', 'published': None, 'modified': '2026-10-22'}
+            new = {'url': 'https://www.jw.org/es/new/', 'title': 'New', 'published': datetime.now(timezone.utc).isoformat(), 'modified': '2026-10-22'}
             with patch.object(scan, 'OUTPUT', output), patch.object(scan, 'SOURCES', [source]), patch.object(scan.time, 'sleep'), patch.object(scan, 'sitemap_items') as items:
                 items.return_value = [old]
                 scan.run()
@@ -72,6 +73,63 @@ class NewPublicationTests(unittest.TestCase):
                 state = json.loads(output.read_text())
                 self.assertEqual(state['sources']['Map']['new'], 0)
                 self.assertEqual(state['pending_notifications'][new['url']]['kind'], 'Nuevo')
+
+
+    def test_old_modified_and_undated_items_do_not_notify(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'data.json'
+            source = {'name': 'Feed', 'url': 'https://www.jw.org/es/lo-nuevo/rss/feed.xml', 'type': 'rss'}
+            old = {'url': 'https://www.jw.org/es/old/', 'title': 'Old edited', 'published': '2020-01-01T00:00:00Z'}
+            undated = {'url': 'https://www.jw.org/es/unknown/', 'title': 'Unknown date', 'published': None}
+            recent = {'url': 'https://www.jw.org/es/recent/', 'title': 'Genuine new', 'published': datetime.now(timezone.utc).isoformat()}
+            with patch.object(scan, 'OUTPUT', output), patch.object(scan, 'SOURCES', [source]), patch.object(scan.time, 'sleep'), patch.object(scan, 'fetch', return_value='<rss/>'), patch.object(scan, 'rss_items') as items:
+                items.return_value = [old]
+                scan.run()
+                items.return_value = [old, undated, recent]
+                scan.run()
+                state = json.loads(output.read_text(encoding='utf-8'))
+                self.assertEqual(state['sources']['Feed']['new'], 1)
+                self.assertEqual(list(state['pending_notifications']), [recent['url']])
+                old['title'] = 'Old edited again'
+                items.return_value = [old, undated, recent]
+                scan.run()
+                state = json.loads(output.read_text(encoding='utf-8'))
+                self.assertEqual(state['sources']['Feed']['new'], 0)
+                self.assertEqual(list(state['pending_notifications']), [recent['url']])
+
+    def test_recent_date_parsing_and_old_dates(self):
+        recent = datetime.now(timezone.utc).isoformat()
+        checked = scan.now()
+        self.assertTrue(scan.is_recent_publication(recent, checked))
+        self.assertFalse(scan.is_recent_publication('2018-01-01', checked))
+        self.assertFalse(scan.is_recent_publication(None, checked))
+        self.assertFalse(scan.is_recent_publication('not a date', checked))
+
+
+    def test_undated_novedad_requires_second_scan_and_no_duplicate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'data.json'
+            source = {'name': 'Novedades', 'url': 'https://www.jw.org/es/lo-nuevo/', 'type': 'html', 'prefix': '/es/'}
+            old = {'url': 'https://www.jw.org/es/biblioteca/old/article/', 'title': 'Old item', 'published': None}
+            new = {'url': 'https://www.jw.org/es/biblioteca/new/article/', 'title': 'New item', 'published': None}
+            with patch.object(scan, 'OUTPUT', output), patch.object(scan, 'SOURCES', [source]), patch.object(scan.time, 'sleep'), patch.object(scan, 'fetch', return_value='<main/>'), patch.object(scan, 'html_items') as items:
+                items.return_value = [old]
+                scan.run()
+                items.return_value = [old, new]
+                scan.run()
+                self.assertEqual(json.loads(output.read_text())['pending_notifications'], {})
+                scan.run()
+                state = json.loads(output.read_text())
+                self.assertEqual(list(state['pending_notifications']), [new['url']])
+                self.assertEqual(state['pending_notifications'][new['url']]['verified_by'], 'novedades')
+                scan.run()
+                self.assertEqual(json.loads(output.read_text())['sources']['Novedades']['new'], 0)
+
+    def test_questions_html_without_main_fallback(self):
+        source = {'name': 'Preguntas sobre la Biblia', 'url': 'https://www.jw.org/es/enseñanzas-bíblicas/preguntas/', 'prefix': '/es/enseñanzas-bíblicas/preguntas/'}
+        html = '<html><body><a href="/es/enseñanzas-bíblicas/preguntas/que-es-la-biblia/">¿Qué es la Biblia?</a></body></html>'
+        items = scan.html_items(html, source)
+        self.assertEqual(len(items), 1)
 
 
 if __name__ == '__main__':

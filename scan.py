@@ -1,7 +1,8 @@
 import json
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit, quote, unquote
@@ -42,9 +43,9 @@ SOURCES = [
     },
     {
         "name": "Artículos",
-        "url": "https://www.jw.org/es/biblioteca/series/",
+        "url": "https://www.jw.org/es/enseñanzas-bíblicas/",
         "type": "html",
-        "prefix": "/es/biblioteca/series/",
+        "prefix": "/es/enseñanzas-bíblicas/",
     },
     {
         "name": "Preguntas sobre la Biblia",
@@ -222,6 +223,12 @@ def rss_items(text):
 def html_items(text, source):
     parser = Links()
     parser.feed(text)
+    # Algunas páginas no usan <main> en el HTML entregado al monitor.
+    # Se recuperan enlaces de toda la página solo para la sección específica.
+    if not parser.items and source["name"] in ("Preguntas sobre la Biblia", "Artículos"):
+        parser = Links()
+        parser.main_depth = 1
+        parser.feed(text)
     result = {}
     source_url = canonical(source["url"])
 
@@ -231,7 +238,7 @@ def html_items(text, source):
             continue
 
         path = urlsplit(url).path
-        prefix = source["prefix"]
+        prefix = quote(unquote(source["prefix"]), safe="/")
 
         if not path.startswith(prefix):
             continue
@@ -253,6 +260,32 @@ def html_items(text, source):
 
     return list(result.values())
 
+def is_recent_publication(value, checked):
+    """Solo fechas de publicación explícitas, nunca lastmod."""
+    if not value:
+        return False
+    try:
+        try:
+            published = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            published = parsedate_to_datetime(value)
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        published = published.astimezone(timezone.utc)
+        moment = datetime.fromisoformat(checked)
+        return moment - timedelta(days=7) <= published <= moment + timedelta(hours=12)
+    except (ValueError, TypeError, OverflowError):
+        return False
+
+
+def known_identity(url):
+    """Identidad independiente de cambios cosméticos en enlaces multimedia."""
+    p = urlsplit(url)
+    if p.fragment.startswith("es/mediaitems/"):
+        return "media:" + unquote(p.fragment.split("/", 2)[-1]).lower()
+    return "page:" + unquote(p.path).rstrip("/").lower()
+
+
 def run():
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
@@ -271,7 +304,13 @@ def run():
         if event.get("kind") == "Nuevo"
     }
     checked = now()
+    known = {known_identity(url) for url in state["items"]}
     successful = 0
+    # Un enlace sin fecha solo puede alertar si aparece en la lista oficial de novedades
+    # durante dos escaneos consecutivos, y no figura en el historial previo.
+    candidates = state.setdefault("undated_candidates", {})
+    previous_candidates = dict(candidates)
+    seen_candidates = set()
 
     for source in SOURCES:
         name = source["name"]
@@ -300,6 +339,14 @@ def run():
                 existing = state["items"].get(url)
 
                 if existing is None:
+                    already_known = known_identity(url) in known
+                    # Las páginas sin fecha verificable se registran, pero no generan alertas.
+                    notify_new = (not baseline and not already_known
+                                  and is_recent_publication(item.get("published"), checked))
+                    if (not baseline and not already_known and not item.get("published")
+                            and name == "Novedades"):
+                        candidates[url] = {"first_seen": checked, "title": item["title"]}
+                        seen_candidates.add(url)
                     state["items"][url] = {
                         **item,
                         "section": item.get("section", section(url)),
@@ -308,7 +355,8 @@ def run():
                         "baseline": baseline,
                         "sources": [name],
                     }
-                    if not baseline:
+                    known.add(known_identity(url))
+                    if notify_new:
                         added += 1
                         state["pending_notifications"][url] = {"title": item["title"], "url": url, "kind": "Nuevo", "detected": checked, "delivered": []}
                 else:
@@ -321,6 +369,15 @@ def run():
                         existing["sources"].append(name)
                     if item["published"]:
                         existing["published"] = item["published"]
+                    if name == "Novedades" and url in previous_candidates:
+                        seen_candidates.add(url)
+                        if (not existing.get("baseline") and not existing.get("published")
+                                and url not in state["pending_notifications"]
+                                and not existing.get("undated_notified")):
+                            added += 1
+                            existing["undated_notified"] = True
+                            state["pending_notifications"][url] = {"title": item["title"], "url": url,
+                                "kind": "Nuevo", "detected": checked, "delivered": [], "verified_by": "novedades"}
 
             state["sources"][name] = {
                 "url": source["url"],
@@ -347,6 +404,17 @@ def run():
 
         time.sleep(1)
 
+    # Si desaparece de Novedades, se descarta su candidatura sin fecha.
+    if state["sources"].get("Novedades", {}).get("status") == "ok":
+        state["undated_candidates"] = {url: value for url, value in candidates.items()
+                                      if url in seen_candidates and not state["items"].get(url, {}).get("undated_notified")}
+
+    # Mantener avisos confirmados por la lista de Novedades, aunque no tengan fecha.
+    state["pending_notifications"] = {
+        url: event for url, event in state["pending_notifications"].items()
+        if (event.get("verified_by") == "novedades"
+            or is_recent_publication(state["items"].get(url, {}).get("published"), event.get("detected", checked)))
+    }
     state["checked"] = checked
     state["successful_sources"] = successful
     state["total_sources"] = len(SOURCES)
