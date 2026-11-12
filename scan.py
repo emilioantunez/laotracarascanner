@@ -225,7 +225,7 @@ def html_items(text, source):
     parser.feed(text)
     # Algunas páginas no usan <main> en el HTML entregado al monitor.
     # Se recuperan enlaces de toda la página solo para la sección específica.
-    if not parser.items and source["name"] == "Preguntas sobre la Biblia":
+    if not parser.items and source["name"] in ("Preguntas sobre la Biblia", "Artículos"):
         parser = Links()
         parser.main_depth = 1
         parser.feed(text)
@@ -238,7 +238,7 @@ def html_items(text, source):
             continue
 
         path = urlsplit(url).path
-        prefix = source["prefix"]
+        prefix = quote(unquote(source["prefix"]), safe="/")
 
         if not path.startswith(prefix):
             continue
