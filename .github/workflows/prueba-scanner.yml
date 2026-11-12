@@ -1,0 +1,38 @@
+name: Probar scanner sin enviar correos
+
+on:
+  pull_request:
+    paths:
+      - "scan.py"
+      - "test*.py"
+      - ".github/workflows/prueba-scanner.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  prueba:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Descargar rama de prueba
+        uses: actions/checkout@v4
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Ejecutar pruebas
+        run: python -m unittest -v
+      - name: Ejecutar scanner sin correos
+        run: python scan.py
+      - name: Mostrar resumen
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          state = json.loads(Path("site/data.json").read_text(encoding="utf-8"))
+          print("Publicaciones registradas:", len(state.get("items", {})))
+          print("Notificaciones pendientes:", len(state.get("pending_notifications", {})))
+          for name, source in state.get("sources", {}).items():
+              print(name, source.get("status"), "Nuevos:", source.get("new", 0))
+          PY
