@@ -106,5 +106,31 @@ class NewPublicationTests(unittest.TestCase):
         self.assertFalse(scan.is_recent_publication('not a date', checked))
 
 
+    def test_undated_novedad_requires_second_scan_and_no_duplicate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'data.json'
+            source = {'name': 'Novedades', 'url': 'https://www.jw.org/es/lo-nuevo/', 'type': 'html', 'prefix': '/es/'}
+            old = {'url': 'https://www.jw.org/es/biblioteca/old/article/', 'title': 'Old item', 'published': None}
+            new = {'url': 'https://www.jw.org/es/biblioteca/new/article/', 'title': 'New item', 'published': None}
+            with patch.object(scan, 'OUTPUT', output), patch.object(scan, 'SOURCES', [source]), patch.object(scan.time, 'sleep'), patch.object(scan, 'fetch', return_value='<main/>'), patch.object(scan, 'html_items') as items:
+                items.return_value = [old]
+                scan.run()
+                items.return_value = [old, new]
+                scan.run()
+                self.assertEqual(json.loads(output.read_text())['pending_notifications'], {})
+                scan.run()
+                state = json.loads(output.read_text())
+                self.assertEqual(list(state['pending_notifications']), [new['url']])
+                self.assertEqual(state['pending_notifications'][new['url']]['verified_by'], 'novedades')
+                scan.run()
+                self.assertEqual(json.loads(output.read_text())['sources']['Novedades']['new'], 0)
+
+    def test_questions_html_without_main_fallback(self):
+        source = {'name': 'Preguntas sobre la Biblia', 'url': 'https://www.jw.org/es/enseñanzas-bíblicas/preguntas/', 'prefix': '/es/enseñanzas-bíblicas/preguntas/'}
+        html = '<html><body><a href="/es/enseñanzas-bíblicas/preguntas/que-es-la-biblia/">¿Qué es la Biblia?</a></body></html>'
+        items = scan.html_items(html, source)
+        self.assertEqual(len(items), 1)
+
+
 if __name__ == '__main__':
     unittest.main()
