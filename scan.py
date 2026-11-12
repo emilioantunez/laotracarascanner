@@ -1,7 +1,8 @@
 import json
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit, quote, unquote
@@ -253,6 +254,32 @@ def html_items(text, source):
 
     return list(result.values())
 
+def is_recent_publication(value, checked):
+    """Solo fechas de publicación explícitas, nunca lastmod."""
+    if not value:
+        return False
+    try:
+        try:
+            published = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            published = parsedate_to_datetime(value)
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        published = published.astimezone(timezone.utc)
+        moment = datetime.fromisoformat(checked)
+        return moment - timedelta(days=7) <= published <= moment + timedelta(hours=12)
+    except (ValueError, TypeError, OverflowError):
+        return False
+
+
+def known_identity(url):
+    """Identidad independiente de cambios cosméticos en enlaces multimedia."""
+    p = urlsplit(url)
+    if p.fragment.startswith("es/mediaitems/"):
+        return "media:" + unquote(p.fragment.split("/", 2)[-1]).lower()
+    return "page:" + unquote(p.path).rstrip("/").lower()
+
+
 def run():
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
@@ -271,6 +298,7 @@ def run():
         if event.get("kind") == "Nuevo"
     }
     checked = now()
+    known = {known_identity(url) for url in state["items"]}
     successful = 0
 
     for source in SOURCES:
@@ -300,6 +328,10 @@ def run():
                 existing = state["items"].get(url)
 
                 if existing is None:
+                    already_known = known_identity(url) in known
+                    # Las páginas sin fecha verificable se registran, pero no generan alertas.
+                    notify_new = (not baseline and not already_known
+                                  and is_recent_publication(item.get("published"), checked))
                     state["items"][url] = {
                         **item,
                         "section": item.get("section", section(url)),
@@ -308,7 +340,8 @@ def run():
                         "baseline": baseline,
                         "sources": [name],
                     }
-                    if not baseline:
+                    known.add(known_identity(url))
+                    if notify_new:
                         added += 1
                         state["pending_notifications"][url] = {"title": item["title"], "url": url, "kind": "Nuevo", "detected": checked, "delivered": []}
                 else:
@@ -347,6 +380,11 @@ def run():
 
         time.sleep(1)
 
+    # No enviar avisos históricos si su fecha original no acredita novedad.
+    state["pending_notifications"] = {
+        url: event for url, event in state["pending_notifications"].items()
+        if is_recent_publication(state["items"].get(url, {}).get("published"), event.get("detected", checked))
+    }
     state["checked"] = checked
     state["successful_sources"] = successful
     state["total_sources"] = len(SOURCES)
