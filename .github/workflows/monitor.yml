@@ -81,10 +81,11 @@ jobs:
             fi
           fi
 
+       
       - name: Configurar Pages
         uses: actions/configure-pages@v5
 
-        - name: Preparar página
+      - name: Preparar página
         uses: actions/upload-pages-artifact@v4
         with:
           path: site
@@ -92,6 +93,7 @@ jobs:
       - name: Publicar
         id: deployment
         uses: actions/deploy-pages@v4
+
       - name: Informar fallo de correo
         if: steps.email.outcome == 'failure'
         run: |
