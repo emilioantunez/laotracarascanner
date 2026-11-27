@@ -84,8 +84,8 @@ jobs:
       - name: Configurar Pages
         uses: actions/configure-pages@v5
 
-      - name: Preparar página
-        uses: actions/upload-pages-artifact@v3
+        - name: Preparar página
+        uses: actions/upload-pages-artifact@v4
         with:
           path: site
 
